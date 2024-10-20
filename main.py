@@ -36,18 +36,46 @@ def select_configuration():
         try:
             choice = int(input("Select a configuration (1-3): "))
             if choice in configs:
-                return configs[choice][1]
+                return configs[choice]
             else:
                 print("Invalid choice. Please select a number between 1 and 3.")
         except ValueError:
             print("Invalid input. Please enter a number.")
 
+def select_scenario_and_configuration():
+    scenarios = Connection.get_available_scenarios()
+    
+    print("Available scenarios:")
+    for i, scenario in enumerate(scenarios, 1):
+        print(f"{i}. {scenario}")
+    
+    while True:
+        try:
+            scenario_choice = int(input("Select a scenario (enter the number): "))
+            if 1 <= scenario_choice <= len(scenarios):
+                selected_scenario = scenarios[scenario_choice - 1]
+                break
+            else:
+                print("Invalid choice. Please select a valid number.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+
+    print(f"\nSelected scenario: {selected_scenario}")
+    print("\nNow, select a configuration for the AI personality:")
+    
+    config_name, config_id = select_configuration()
+    
+    return selected_scenario, config_name, config_id
+
 
 async def main():
     pyaudio_instance = PyAudio()
 
-    selected_config = select_configuration()
-    print(f"Selected configuration ID: {selected_config}")
+    selected_scenario, config_name, selected_config = select_scenario_and_configuration()
+    print(f"Selected scenario: {selected_scenario}")
+    print(f"Selected configuration: {config_name} (Config ID: {selected_config})")
+    
+    Connection.initialize_scenario(selected_scenario)
     
     try:
         input_devices, output_devices = AudioDevices.list_audio_devices(pyaudio_instance)

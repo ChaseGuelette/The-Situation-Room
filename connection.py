@@ -8,19 +8,89 @@ import os
 import numpy as np
 import websockets
 import soundfile
+import copy
+
+from dotenv import load_dotenv
 from pydub import AudioSegment
 from pydub.playback import play
 from pyaudio import Stream as PyAudioStream
 from concurrent.futures import ThreadPoolExecutor
 from audio_processing import process_audio_chunk
 
+from emotion_matcher import EmotionMatcher
+from negotiation_manager import NegotiationManager
+from scenario_manager import ScenarioManager
+from llm_demand_checker import LLMDemandChecker
+
+#custom file imports
+from emotion_matcher import EmotionMatcher
+from emotion_matcher import EmotionMatcher
+from negotiation_manager import NegotiationManager
+from scenario_manager import ScenarioManager
+from llm_demand_checker import LLMDemandChecker
+
 executor = ThreadPoolExecutor(max_workers=1)
 # logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.DEBUG)
 
 class Connection:
-    user_emotion_scores = []  # Class variable to store emotion scores
+    load_dotenv()
+    user_emotion_scores = []
     ai_emotion_scores = []
+    emotion_matcher = EmotionMatcher()
+    scenario_manager = ScenarioManager()
+    llm_checker = LLMDemandChecker(os.getenv('GEMINI_API_KEY'))
+    negotiation_manager = NegotiationManager(emotion_matcher, scenario_manager, llm_checker)
+    current_context = None
 
+    @classmethod
+    def initialize_scenario(cls, scenario_name):
+        cls.scenario_manager.select_scenario(scenario_name)
+        cls.negotiation_manager.load_demands()
+        cls._update_context()
+
+    @classmethod
+    def get_available_scenarios(cls):
+        return cls.scenario_manager.get_scenario_names()
+
+    @classmethod
+    def _update_context(cls):
+        try:
+            current_demands = cls.negotiation_manager.get_current_demands()
+            scenario = cls.scenario_manager.get_current_scenario()
+            
+            context = copy.deepcopy(scenario)
+            for i, demand in enumerate(context["demands"]):
+                current_value = current_demands[i][2]  # This is the current_value, not necessarily the level
+                levels = demand.get("levels", [])
+                
+                if not levels:
+                    logging.error(f"No levels found for demand {i}: {demand['description']}")
+                    continue
+                
+                # Find the appropriate level based on the current_value
+                current_level = 0
+                for j, level in enumerate(levels):
+                    if str(current_value) == str(level['value']):
+                        current_level = j
+                        break
+                else:
+                    logging.warning(f"No exact match found for current value {current_value} in demand {i}: {demand['description']}. Using the highest level.")
+                    current_level = len(levels) - 1
+
+                demand.update(levels[current_level])
+                del demand["levels"]  # Remove the levels array from the context
+
+            cls.current_context = {
+                "text": json.dumps(context),
+                "type": "editable"
+            }
+            logging.info("Context updated successfully")
+        except Exception as e:
+            logging.error(f"Error in _update_context: {e}")
+            cls.current_context = {
+                "text": json.dumps({"error": "Failed to update context"}),
+                "type": "editable"
+            }
 
     @classmethod
     async def connect(cls, socket_url, audio_stream, sample_rate, sample_width, num_channels, chunk_size, audio_processor=None):
@@ -35,14 +105,50 @@ class Connection:
                     )
                     receive_task = asyncio.create_task(cls._receive_data(socket, audio_queue))
                     playback_task = asyncio.create_task(cls._play_audio_from_queue(audio_queue))
+                    context_injection_task = asyncio.create_task(cls._inject_context(socket))
                     
-                    logging.info("Starting send, receive, and playback tasks")
-                    await asyncio.gather(receive_task, send_task, playback_task)
+                    logging.info("Starting send, receive, playback, and context injection tasks")
+                    await asyncio.gather(receive_task, send_task, playback_task, context_injection_task)
             except websockets.exceptions.ConnectionClosed:
                 logging.error("WebSocket connection closed. Attempting to reconnect in 5 seconds...")
                 await asyncio.sleep(5)
             except Exception as e:
                 logging.error(f"An error occurred in connect: {e}. Attempting to reconnect in 5 seconds...")
+                await asyncio.sleep(5)
+
+    @classmethod
+    async def _inject_context(cls, socket):
+        while True:
+            try:
+                cls._update_context()  # Update the context before injection
+
+                # Prepare context message
+                context_message = {
+                    "type": "session_settings",
+                    "payload": {
+                        "context": cls.current_context
+                    }
+                }
+
+                # Additional dynamic information
+                additional_info = {
+                    "success_score": cls.emotion_matcher.get_success_score(),
+                    "average_emotion_match": cls.emotion_matcher.get_average_match(),
+                }
+
+                # Merge additional info into the context
+                context_data = json.loads(cls.current_context["text"])
+                context_data.update(additional_info)
+                cls.current_context["text"] = json.dumps(context_data)
+
+                # Inject context
+                await socket.send(json.dumps(context_message))
+                logging.info("Context injected successfully")
+
+                # Wait before next injection
+                await asyncio.sleep(10)  # Adjust timing as needed
+            except Exception as e:
+                logging.error(f"Error in context injection: {e}")
                 await asyncio.sleep(5)
 
     @classmethod
@@ -75,25 +181,72 @@ class Connection:
             logging.info("Exiting receive loop")
 
     @classmethod
+    async def update_scenario_during_conversation(cls, socket, demand_index, new_level):
+        cls.negotiation_manager.adjust_demand(demand_index, new_level)
+        cls._update_context()
+        update_message = {
+            "type": "session_settings",
+            "payload": {
+                "context": cls.current_context
+            }
+        }
+        await socket.send(json.dumps(update_message))
+
+    @classmethod
     def _process_emotion_scores(cls, json_message, is_user):
         try:
             prosody_scores = json_message.get("models", {}).get("prosody", {}).get("scores", {})
             if prosody_scores:
                 sorted_scores = sorted(prosody_scores.items(), key=lambda x: x[1], reverse=True)
-                top_3_scores = sorted_scores[:3]
+                top_5_scores = sorted_scores[:5]
+                
                 if is_user:
-                    cls.user_emotion_scores.append(top_3_scores)
-                    print("Top 3 User Emotion Scores:")
+                    cls.user_emotion_scores.append(top_5_scores)
+                    match_score, user_emotions, best_ai_emotions, success_increment, range_info = cls.emotion_matcher.add_user_emotion(top_5_scores)
+                    print("Top 5 User Emotion Scores:")
+                    for emotion, score in user_emotions:
+                        print(f"{emotion}: {score:.3f}")
+                    print()
+
+                    user_message = json_message.get("text", "")
+                    cls.negotiation_manager.update_transcript(f"User: {user_message}")
+                    met_demands = cls.negotiation_manager.check_demands()
+                    if met_demands:
+                        print("\nDemands met in this message:")
+                        for index, message in met_demands:
+                            print(message)
+                    
+                    cls.negotiation_manager.adjust_demands()  # Adjust demands based on new success score
+                    cls._update_context()  # Update context after demand adjustments
+                    
+                    if best_ai_emotions:
+                        print("Best Matching AI Emotion Scores:")
+                        for emotion, score in best_ai_emotions:
+                            print(f"{emotion}: {score:.3f}")
+                    print()
+                    
+                    print(f"Emotion match score: {match_score:.2f}")
+                    print(f"Match range: {range_info}")
+                    print(f"Success increment: {success_increment}")
+                    print(f"Cumulative success score: {cls.emotion_matcher.get_success_score()}")
+                    print(f"Average emotion match: {cls.emotion_matcher.get_average_match():.2f}")
                 else:
-                    cls.ai_emotion_scores.append(top_3_scores)
-                    print("Top 3 AI Emotion Scores:")
-                for emotion, score in top_3_scores:
-                    print(f"{emotion}: {score}")
+                    cls.ai_emotion_scores.append(top_5_scores)
+                    ai_emotions = cls.emotion_matcher.add_ai_emotions(top_5_scores)
+                    print("Top 5 AI Emotion Scores:")
+                    for emotion, score in ai_emotions:
+                        print(f"{emotion}: {score:.3f}")
+                    print()
+
+                    ai_message = json_message.get("text", "")
+                    cls.negotiation_manager.update_transcript(f"AI: {ai_message}")
+                
                 print()  # Add an empty line for better readability
             else:
                 logging.warning(f"Prosody scores not found in the {'user' if is_user else 'AI'} message")
         except Exception as e:
             logging.error(f"Error processing {'user' if is_user else 'AI'} emotion scores: {e}")
+
 
     @classmethod
     def get_user_emotion_scores(cls):
@@ -158,6 +311,13 @@ class Connection:
                     json_message = json.dumps({"type": "audio_input", "data": encoded_audio})
                     await socket.send(json_message)
                     # logging.debug("Processed audio data sent successfully")
+
+                    json_message = {
+                        "type": "audio_input",
+                        "data": encoded_audio,
+                        "context": cls.current_context
+                    }
+                    await socket.send(json.dumps(json_message))
 
                     wav_buffer = io.BytesIO()
                 except Exception as e:

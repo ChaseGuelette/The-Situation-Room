@@ -1,0 +1,95 @@
+{
+    "Hostage Situation": {
+      "demands": [
+        {
+          "description": "Monetary Demand",
+          "initial_value": 10000000,
+          "feasibility": 0.2,
+          "levels": [
+            {
+              "value": 10000000,
+              "feasibility": 0.2,
+              "description": "Demanding $10 million in cash delivered by helicopter within the hour."
+            },
+            {
+              "value": 5000000,
+              "feasibility": 0.4,
+              "description": "Demanding $5 million in cash, delivered to the front entrance by law enforcement."
+            },
+            {
+              "value": 1000000,
+              "feasibility": 0.7,
+              "description": "Demanding $1 million in cash transferred electronically to a specific account."
+            }
+          ]
+        },
+        {
+          "description": "Safe Passage and Transport",
+          "initial_value": 1,
+          "feasibility": 0.3,
+          "levels": [
+            {
+              "value": 1,
+              "feasibility": 0.3,
+              "description": "Demanding a helicopter with no police escort and free passage to an undisclosed location."
+            },
+            {
+              "value": 1,
+              "feasibility": 0.6,
+              "description": "Demanding a car with tinted windows and a police-free route out of the city, monitored via radio."
+            },
+            {
+              "value": 1,
+              "feasibility": 0.8,
+              "description": "Demanding a regular vehicle and assurance of no immediate police pursuit for at least 15 minutes."
+            }
+          ]
+        },
+        {
+          "description": "Release of Family Member",
+          "initial_value": 3,
+          "feasibility": 0.2,
+          "levels": [
+            {
+              "value": 3,
+              "feasibility": 0.2,
+              "description": "Demanding the immediate release of three detained family members, with full immunity."
+            },
+            {
+              "value": 2,
+              "feasibility": 0.5,
+              "description": "Demanding the release of two detained family members, with assurance of minimal charges."
+            },
+            {
+              "value": 1,
+              "feasibility": 0.8,
+              "description": "Demanding the release of one detained family member, pending negotiation on charges."
+            }
+          ]
+        },
+        {
+          "description": "Legal Immunity",
+          "initial_value": "Full Legal Immunity",
+          "feasibility": 0.1,
+          "levels": [
+            {
+              "value": "Full Legal Immunity",
+              "feasibility": 0.1,
+              "description": "Demanding full legal immunity and no prosecution for all actions taken during the hostage situation."
+            },
+            {
+              "value": "Reduced Charges",
+              "feasibility": 0.4,
+              "description": "Demanding a reduced set of charges and assurance of minimum sentencing for actions taken."
+            },
+            {
+              "value": "Negotiated Sentence",
+              "feasibility": 0.7,
+              "description": "Demanding a negotiated sentence with reduced penalties in exchange for peaceful surrender."
+            }
+          ]
+        }
+      ]
+    }
+  }
+  
